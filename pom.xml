@@ -6,7 +6,7 @@
 		<groupId>org.springframework.boot</groupId>
 		<artifactId>spring-boot-starter-parent</artifactId>
 		<version>3.2.5</version>
-		<relativePath/> <!-- lookup parent from repository -->
+		<relativePath/>
 	</parent>
 	<groupId>com.javatechie</groupId>
 	<artifactId>course-service</artifactId>
@@ -15,6 +15,7 @@
 	<description>Simple Spring Boot Application</description>
 	<properties>
 		<java.version>17</java.version>
+		<lombok.version>1.18.32</lombok.version>
 	</properties>
 	<dependencies>
 		<dependency>
@@ -25,6 +26,7 @@
 		<dependency>
 			<groupId>org.projectlombok</groupId>
 			<artifactId>lombok</artifactId>
+			<version>${lombok.version}</version>
 			<optional>true</optional>
 		</dependency>
 		<dependency>
@@ -41,10 +43,10 @@
 
 	<build>
 		<plugins>
-			<!-- Plugin Compiler: Memproses anotasi Lombok saat mvn compile -->
 			<plugin>
 				<groupId>org.apache.maven.plugins</groupId>
 				<artifactId>maven-compiler-plugin</artifactId>
+				<version>3.11.0</version>
 				<configuration>
 					<source>17</source>
 					<target>17</target>
@@ -73,5 +75,4 @@
 		</plugins>
 		<finalName>course-service</finalName>
 	</build>
-
 </project>
