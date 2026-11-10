@@ -20,9 +20,26 @@ Tutorial ini menggunakan :
 	  - URI -> 518501464729.dkr.ecr.ap-southeast-2.amazonaws.com/javatechie-registry
 	  
 	  
-Langkah 3, atur file buildspec.yaml di project kita
+- Langkah 3, atur file buildspec.yaml di project kita
 	- Setting value dari REPOSITORY_URI
 	- Set Value Region sesuai region yang kita pakai
 	- Set Value DOCKER_CONTAINER_NAME
+	- git push
+	
+	
+- Langkah 4, buat Code Build di console aws-cicd
+	- Klik tombol Create Project
+	- Set Project name dengan value course-project
+	- Source provider set github
+	- Repository URL -> https://github.com/triandridrdr/aws-cicd.git
+	- Set Role name -> course-project-service-role
+	- Chechlist -> Use a buildspec file
+	- Klik tombol -> Create Build Project
+	
+- Langkah 5, Tambahkan I am pada Service role yang kita buat di Code Build
+	- Add Permissions -> Attact Police -> checklist
+		- AmazonEC2ContainerRegistryFullAccess
+		- AmazonEC2ContainerRegistryPowerUser
+	- Lalu klik tombol add Permission
 
 	  
