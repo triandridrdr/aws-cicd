@@ -81,6 +81,12 @@ Tutorial ini menggunakan :
 - Masuk ke Code Build lalu klik tombol edit
 	- Masuk ke Webhook lalu checklist "Rebuild Every Time"
 	
+- Masuk ke code pipeline
+	
+	Add build stage - optional
+	
+	code build aws -> course-projects
+	
 	
 	
 		
