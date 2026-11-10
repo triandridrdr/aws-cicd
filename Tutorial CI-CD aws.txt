@@ -1,3 +1,28 @@
-git init
-git add .
-git commit -m "feat: initial commit"
+Tutorial ini menggunakan :
+	- Docker Image
+	- Elastic Container Registy
+	- Elastic Container Service
+	
+
+- Langkah 1, masuk ke git
+	git init
+	git add .
+	git commit -m "feat: initial commit"
+	git branch -M main
+	git remote add origin https://github.com/triandridrdr/aws-cicd.git
+	git push -u origin main
+	
+	
+- Langka 2 buat Elastic Container Registry di Aws Console
+	- Buat sebuah repository bernama javatechie-registry
+	  - dan biarkan semua nya default, lalu klik create
+	  - Repository Name -> javatechie-registry
+	  - URI -> 518501464729.dkr.ecr.ap-southeast-2.amazonaws.com/javatechie-registry
+	  
+	  
+Langkah 3, atur file buildspec.yaml di project kita
+	- Setting value dari REPOSITORY_URI
+	- Set Value Region sesuai region yang kita pakai
+	- Set Value DOCKER_CONTAINER_NAME
+
+	  
