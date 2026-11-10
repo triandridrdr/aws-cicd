@@ -36,10 +36,53 @@ Tutorial ini menggunakan :
 	- Chechlist -> Use a buildspec file
 	- Klik tombol -> Create Build Project
 	
+	
 - Langkah 5, Tambahkan I am pada Service role yang kita buat di Code Build
 	- Add Permissions -> Attact Police -> checklist
 		- AmazonEC2ContainerRegistryFullAccess
 		- AmazonEC2ContainerRegistryPowerUser
 	- Lalu klik tombol add Permission
+	- Jalankan code build, jika sukses akan push image ke repository di ECR yang kita buat
+	
 
+- Langkah 6, Buat Elastic Container Service
+	- Masuk ke Amazon Elastic Container Service
+	
+	- Buka Tab Task Definition
+	- Checklist AWS Fargate
+	- CPU dan Memory pilih yang paling kecil
+	- Isi Container details
+		- Set Value Name -> javatechie-registry
+		- Image URI -> 518501464729.dkr.ecr.ap-southeast-2.amazonaws.com/javatechie-registry
+		- Tambahkan Container port -> 8080, Protocol -> TCP, App protocol -> HTTP
+	- Klik Tombol Create 
+	
+	- Buka tab cluster 
+	- Lalu Create cluster 
+	- Set Cluster name -> javatechie-cluster
+	- Klik tombol create
+	
+	- Masuk ke Clusters yang kita buat "javatechie-cluster"
+		- Lalu masuk ke tab services
+		- Create Service
+			- Task definition family -> course-task
+		
+		- Masuk ke Networking
+			- klik radio batton "Create a new security group"
+			- Tambahkan All Traffic dan All TCP
+			- Klik Tombol Create
+
+
+--Cara test cluster yang kita buat sebelum code pipeline
+	- Masuk ke Cluster -> ke service -> Task
+	- Coba Swagger ke IP Public -> http://3.27.56.127:8080/swagger-ui/index.htm
+	
+
+- Masuk ke Code Build lalu klik tombol edit
+	- Masuk ke Webhook lalu checklist "Rebuild Every Time"
+	
+	
+	
+		
+		
 	  
