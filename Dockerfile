@@ -1,5 +1,5 @@
-# Gunakan base image resmi Java 17 dari Amazon ECR Public (bebas rate limit di AWS)
-FROM public.ecr.aws/amazoncorretto/amazoncorretto:17-alpine
+# Gunakan base image resmi Java 17 headless dari Amazon ECR Public
+FROM public.ecr.aws/amazoncorretto/amazoncorretto:17-al2023-headless
 
 # Set working directory inside the container
 WORKDIR /app
