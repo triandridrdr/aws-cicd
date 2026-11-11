@@ -1,94 +1,267 @@
-Tutorial ini menggunakan :
-	- Docker Image
-	- Elastic Container Registy
-	- Elastic Container Service
-	
+================================================================================
+END-TO-END CI/CD PIPELINE: GITHUB -> ECR -> ECS FARGATE MENGGUNAKAN CODEPIPELINE
+================================================================================
 
-- Langkah 1, masuk ke git
-	git init
-	git add .
-	git commit -m "feat: initial commit"
-	git branch -M main
-	git remote add origin https://github.com/triandridrdr/aws-cicd.git
-	git push -u origin main
-	
-	
-- Langka 2 buat Elastic Container Registry di Aws Console
-	- Buat sebuah repository bernama javatechie-registry
-	  - dan biarkan semua nya default, lalu klik create
-	  - Repository Name -> javatechie-registry
-	  - URI -> 518501464729.dkr.ecr.ap-southeast-2.amazonaws.com/javatechie-registry
-	  
-	  
-- Langkah 3, atur file buildspec.yaml di project kita
-	- Setting value dari REPOSITORY_URI
-	- Set Value Region sesuai region yang kita pakai
-	- Set Value DOCKER_CONTAINER_NAME
-	- git push
-	
-	
-- Langkah 4, buat Code Build di console aws-cicd
-	- Klik tombol Create Project
-	- Set Project name dengan value course-project
-	- Source provider set github
-	- Repository URL -> https://github.com/triandridrdr/aws-cicd.git
-	- Set Role name -> course-project-service-role
-	- Chechlist -> Use a buildspec file
-	- Klik tombol -> Create Build Project
-	
-	
-- Langkah 5, Tambahkan I am pada Service role yang kita buat di Code Build
-	- Add Permissions -> Attact Police -> checklist
-		- AmazonEC2ContainerRegistryFullAccess
-		- AmazonEC2ContainerRegistryPowerUser
-	- Lalu klik tombol add Permission
-	- Jalankan code build, jika sukses akan push image ke repository di ECR yang kita buat
-	
+KOMPONEN ARSITEKTUR:
+1. GitHub                     : Repository Source Code
+2. AWS CodeBuild              : CI (Build project & Push Docker image ke ECR)
+3. AWS ECR                    : Registry penyimpanan Docker image
+4. AWS ECS Fargate            : CD / Serverless runtime eksekusi container
+5. AWS CodePipeline           : Otomatisasi orkestrasi (Source -> Build -> Deploy)
 
-- Langkah 6, Buat Elastic Container Service
-	- Masuk ke Amazon Elastic Container Service
-	
-	- Buka Tab Task Definition
-	- Checklist AWS Fargate
-	- CPU dan Memory pilih yang paling kecil
-	- Isi Container details
-		- Set Value Name -> javatechie-registry
-		- Image URI -> 518501464729.dkr.ecr.ap-southeast-2.amazonaws.com/javatechie-registry
-		- Tambahkan Container port -> 8080, Protocol -> TCP, App protocol -> HTTP
-	- Klik Tombol Create 
-	
-	- Buka tab cluster 
-	- Lalu Create cluster 
-	- Set Cluster name -> javatechie-cluster
-	- Klik tombol create
-	
-	- Masuk ke Clusters yang kita buat "javatechie-cluster"
-		- Lalu masuk ke tab services
-		- Create Service
-			- Task definition family -> course-task
-		
-		- Masuk ke Networking
-			- klik radio batton "Create a new security group"
-			- Tambahkan All Traffic dan All TCP
-			- Klik Tombol Create
+================================================================================
+BAGIAN 1: PERSIAPAN REPOSITORY GIT & DOCKERFILE
+================================================================================
+Jalankan perintah ini di root folder project lokal Anda:
+
+git init
+git add .
+git commit -m "feat: initial commit"
+git branch -M main
+git remote add origin https://github.com/triandridrdr/aws-cicd.git
+git push -u origin main
 
 
---Cara test cluster yang kita buat sebelum code pipeline
-	- Masuk ke Cluster -> ke service -> Task
-	- Coba Swagger ke IP Public -> http://3.27.56.127:8080/swagger-ui/index.htm
-	
+================================================================================
+BAGIAN 2: MEMBUAT AMAZON ECR (IMAGE REGISTRY)
+================================================================================
+1. Buka AWS Console -> cari "Elastic Container Registry" (ECR).
+2. Klik tombol "Create repository".
+3. Konfigurasi repository:
+   - General settings : Pilih "Private"
+   - Repository name  : javatechie-registry
+   - Biarkan opsi lain default.
+4. Klik tombol "Create repository".
+5. Catat URI repository yang terbuat:
+   URI: 518501464729.dkr.ecr.ap-southeast-2.amazonaws.com/javatechie-registry
 
-- Masuk ke Code Build lalu klik tombol edit
-	- Masuk ke Webhook lalu checklist "Rebuild Every Time"
-	
-- Masuk ke code pipeline
-	
-	Add build stage - optional
-	
-	code build aws -> course-projects
-	
-	
-	
-		
-		
-	  
+
+================================================================================
+BAGIAN 3: KONFIGURASI BUILDSPEC.YML DI ROOT PROJECT
+================================================================================
+[PENTING]: Agar CodePipeline dapat mengupdate Task Definition di ECS secara
+otomatis saat deployment, CodeBuild HARUS memproduksi output file bernama
+"imagedefinitions.json".
+
+Pastikan file "buildspec.yml" di root project Anda memiliki format berikut:
+
+version: 0.2
+
+phases:
+  pre_build:
+    commands:
+      - echo Logging in to Amazon ECR...
+      - aws --version
+      - aws ecr get-login-password --region ap-southeast-2 | docker login --username AWS --password-stdin 518501464729.dkr.ecr.ap-southeast-2.amazonaws.com
+      - REPOSITORY_URI=518501464729.dkr.ecr.ap-southeast-2.amazonaws.com/javatechie-registry
+      - COMMIT_HASH=$(echo $CODEBUILD_RESOLVED_SOURCE_VERSION | cut -c 1-7)
+      - IMAGE_TAG=${COMMIT_HASH:=latest}
+  build:
+    commands:
+      - echo Build started on `date`
+      - echo Building the Docker image...
+      - docker build -t $REPOSITORY_URI:latest .
+      - docker tag $REPOSITORY_URI:latest $REPOSITORY_URI:$IMAGE_TAG
+  post_build:
+    commands:
+      - echo Build completed on `date`
+      - echo Pushing the Docker images...
+      - docker push $REPOSITORY_URI:latest
+      - docker push $REPOSITORY_URI:$IMAGE_TAG
+      - echo Writing image definitions file...
+      - printf '[{"name":"javatechie-container","imageUri":"%s"}]' $REPOSITORY_URI:$IMAGE_TAG > imagedefinitions.json
+artifacts:
+  files:
+    - imagedefinitions.json
+
+Simpan, lalu push perubahan ke GitHub:
+git add buildspec.yml
+git commit -m "ci: add buildspec with imagedefinitions artifact"
+git push origin main
+
+
+================================================================================
+BAGIAN 4: MEMBUAT DAN KONFIGURASI AWS CODEBUILD
+================================================================================
+1. Buka AWS Console -> cari "CodeBuild" -> klik "Create build project".
+2. Project configuration:
+   - Project name: course-project
+3. Source:
+   - Source provider : GitHub
+   - Repository      : Connect using OAuth / Personal Access Token
+   - Repository URL  : https://github.com/triandridrdr/aws-cicd.git
+4. Environment:
+   - Environment image : Managed image
+   - Compute           : EC2
+   - Operating system  : Amazon Linux 2 (atau Ubuntu standard)
+   - Runtime(s)        : Standard
+   - Image             : aws/codebuild/amazonlinux2-x86_64-standard:5.0 (atau versi terbaru)
+   - Image version     : Always use the latest image for this runtime version
+   - Environment type  : Linux
+   - [WAJIB CENTANG]   : "Privileged" (Enable this flag if you want to build Docker images)
+   - Service role      : New service role (Name: course-project-service-role)
+5. Buildspec:
+   - Pilih: "Use a buildspec file" (buildspec name: buildspec.yml)
+6. Artifacts:
+   - Type: No artifacts (karena artifact akan diatur otomatis oleh CodePipeline)
+7. Klik tombol "Create build project".
+
+--------------------------------------------------------------------------------
+TAMBAHKAN PERMISSION IAM ROLE CODEBUILD:
+--------------------------------------------------------------------------------
+1. Buka AWS Console -> cari "IAM" -> pilih menu "Roles".
+2. Cari dan klik role: "course-project-service-role".
+3. Di tab "Permissions", klik "Add permissions" -> "Attach policies".
+4. Cari dan centang:
+   - AmazonEC2ContainerRegistryPowerUser
+   (Atau AmazonEC2ContainerRegistryFullAccess)
+5. Klik "Add permissions".
+6. Uji manual: Kembali ke CodeBuild -> buka project "course-project" -> klik "Start build".
+   Pastikan statusnya SUCCEEDED dan image berhasil masuk ke ECR.
+
+
+================================================================================
+BAGIAN 5: MENYIAPKAN INFRASTRUKTUR AWS ECS FARGATE
+================================================================================
+HIERARKI STRUKTUR:
+                     [ ECS Cluster ]
+             (Rumah besar / Batas Lingkungan)
+                            |
+                            v
+                     [ ECS Service ]
+             (Pengawas / Manajer Operasional)
+                 /          |          \
+                v           v           v
+           [ Task 1 ]  [ Task 2 ]  [ Task 3 ]
+       (Aplikasi Nyala / Instansiasi Nyata)
+               |            |            |
+               v            v            v
+          [Container]  [Container]  [Container]
+        (Wadah Docker)
+
+Catatan Port 8080:
+Port 8080 dipakai berulang-ulang karena harus cocok di setiap pintu akses:
+Aplikasi (8080) -> Task Def Port Mapping (8080) -> Security Group Inbound (8080) -> URL Browser (:8080).
+
+--------------------------------------------------------------------------------
+LANGKAH 5.1: MEMBUAT TASK DEFINITION ("Buku Resep")
+--------------------------------------------------------------------------------
+1. Buka AWS Console -> "Amazon Elastic Container Service" (ECS).
+2. Di menu kiri, klik "Task definitions" -> klik "Create new task definition".
+3. Task definition family: javatechie-task
+4. Infrastructure requirements / Launch type:
+   - Pilih: AWS Fargate
+   - Operating system/Architecture: Linux/X86_64
+5. Task size:
+   - CPU    : 0.25 vCPU
+   - Memory : 0.5 GB
+6. Container details:
+   - Name         : javatechie-container
+   - Image URI    : 518501464729.dkr.ecr.ap-southeast-2.amazonaws.com/javatechie-registry:latest
+   - Port mappings:
+     * Container port : 8080
+     * Protocol       : TCP
+     * App protocol   : HTTP
+7. Klik tombol "Create".
+
+--------------------------------------------------------------------------------
+LANGKAH 5.2: MEMBUAT CLUSTER ("Gedung / Area Kerja")
+--------------------------------------------------------------------------------
+1. Di menu kiri, klik "Clusters" -> klik "Create cluster".
+2. Cluster name: javatechie-cluster
+3. Infrastructure: Pastikan opsi "AWS Fargate (serverless)" tercentang.
+4. Klik tombol "Create".
+
+--------------------------------------------------------------------------------
+LANGKAH 5.3: MEMBUAT SERVICE ("Manajer Operasional")
+--------------------------------------------------------------------------------
+1. Buka cluster: "javatechie-cluster".
+2. Buka tab "Services" -> klik tombol "Create".
+3. Deployment configuration:
+   - Application type : Service
+   - Family           : javatechie-task
+   - Revision         : latest
+   - Service name     : javatechie-service
+   - Desired tasks    : 1
+4. Networking:
+   - VPC & Subnets: Default VPC dan centang semua Subnet yang ada.
+   - Security group: Create a new security group
+     * Security group name : javatechie-sg
+     * Inbound rules       :
+       - Type   : Custom TCP
+       - Port   : 8080
+       - Source : Anywhere-IPv4 (0.0.0.0/0)
+   - Public IP: Turned ON
+5. Klik tombol "Create".
+
+--------------------------------------------------------------------------------
+LANGKAH 5.4: PENGUJIAN AWAL SEBELUM PIPELINE
+--------------------------------------------------------------------------------
+1. Buka cluster "javatechie-cluster" -> tab "Tasks".
+2. Klik Task ID yang berstatus "Running".
+3. Di bagian "Configuration" / "Network interfaces", salin "Public IP" (misal: 3.27.56.127).
+4. Akses melalui browser:
+   http://<PUBLIC_IP>:8080/swagger-ui/index.html
+5. Pastikan halaman Swagger berhasil tampil.
+
+
+================================================================================
+BAGIAN 6: MEMBUAT PIPELINE OTOMATIS (AWS CODEPIPELINE)
+================================================================================
+Tahap ini menggabungkan Source, Build, dan Deploy agar setiap git push akan
+otomatis mengupdate container di ECS tanpa intervensi manual.
+
+1. Buka AWS Console -> cari "CodePipeline" -> klik "Create pipeline".
+2. Pipeline settings:
+   - Pipeline name : javatechie-pipeline
+   - Pipeline type : V2 (atau V1 default)
+   - Execution mode: Queued / Superseded
+   - Service role  : New service role (biarkan nama default terisi)
+   - Klik "Next".
+
+3. Source stage (Tahap Ambil Kode):
+   - Source provider : GitHub (Version 2)
+   - Connection      : Klik "Connect to GitHub", beri nama koneksi, selesaikan otentikasi di popup.
+   - Repository name : triandridrdr/aws-cicd
+   - Default branch  : main
+   - Trigger         : Pastikan opsi deteksi push aktif (Start the pipeline on source code change).
+   - Output artifact format: CodePipeline default.
+   - Klik "Next".
+
+4. Build stage (Tahap Build & Push ECR):
+   - Build provider : AWS CodeBuild
+   - Region         : ap-southeast-2 (sesuaikan dengan region Anda)
+   - Project name   : course-project
+   - Build type     : Single build
+   - Klik "Next".
+
+5. Deploy stage (Tahap Deploy ke Fargate):
+   - Deploy provider : Amazon ECS
+   - Region          : ap-southeast-2 (sesuaikan dengan region Anda)
+   - Cluster name    : javatechie-cluster
+   - Service name    : javatechie-service
+   - Image definitions file: imagedefinitions.json
+     (File ini dibuat otomatis oleh buildspec.yml pada bagian post_build)
+   - Klik "Next".
+
+6. Review:
+   - Periksa seluruh konfigurasi dari Source -> Build -> Deploy.
+   - Klik tombol "Create pipeline".
+
+
+================================================================================
+BAGIAN 7: UJI COBA OTOMATISASI CI/CD (E2E TEST)
+================================================================================
+1. Lakukan perubahan kecil pada kode di komputer lokal (misal: ubah teks di controller).
+2. Lakukan commit dan push ke GitHub:
+   git add .
+   git commit -m "test: verify automated cicd pipeline"
+   git push origin main
+3. Buka AWS CodePipeline -> "javatechie-pipeline":
+   - Stage Source : Akan otomatis berubah status menjadi "In Progress" lalu "Succeeded".
+   - Stage Build  : CodeBuild akan otomatis mem-build image baru dan mengunggah ke ECR.
+   - Stage Deploy : ECS Fargate akan otomatis mendownload image baru dan melakukan rolling update.
+4. Setelah status Deploy "Succeeded", buka IP Publik Task terbaru di browser:
+   http://<PUBLIC_IP>:8080/swagger-ui/index.html
+   Perubahan kode Anda telah tayang secara otomatis.
+================================================================================

@@ -3,11 +3,15 @@ version: 0.2
 phases:
   pre_build:
     commands:
+      - echo Running Maven build...
       - mvn clean install
       - echo Logging in to Amazon ECR...
       - aws --version
-      - REPOSITORY_URI=518501464729.dkr.ecr.ap-southeast-2.amazonaws.com/javatechie-registry
-      - aws ecr get-login-password --region ap-southeast-2 | docker login --username AWS --password-stdin $REPOSITORY_URI
+      - REGION=ap-southeast-2
+      - ACCOUNT_ID=518501464729
+      - ECR_REGISTRY=$ACCOUNT_ID.dkr.ecr.$REGION.amazonaws.com
+      - REPOSITORY_URI=$ECR_REGISTRY/javatechie-registry
+      - aws ecr get-login-password --region $REGION | docker login --username AWS --password-stdin $ECR_REGISTRY
       - COMMIT_HASH=$(echo $CODEBUILD_RESOLVED_SOURCE_VERSION | cut -c 1-7)
       - IMAGE_TAG=build-$(echo $CODEBUILD_BUILD_ID | awk -F":" '{print $2}')
   build:
@@ -23,17 +27,12 @@ phases:
       - docker push $REPOSITORY_URI:latest
       - docker push $REPOSITORY_URI:$IMAGE_TAG
       - echo Writing image definitions file...
-      - printf '[{"name":"course-service","imageUri":"%s"}]' $REPOSITORY_URI:$IMAGE_TAG > imagedefinitions.json
-      - echo Writing image definitions file...
-      # add your container name
-      - DOCKER_CONTAINER_NAME=javatechie-registry
+      # PASTIKAN DOCKER_CONTAINER_NAME sama persis dengan nama container di ECS Task Definition
+      - DOCKER_CONTAINER_NAME=javatechie-container
       - printf '[{"name":"%s","imageUri":"%s"}]' $DOCKER_CONTAINER_NAME $REPOSITORY_URI:$IMAGE_TAG > imagedefinitions.json
-      - echo $DOCKER_CONTAINER_NAME
       - echo printing imagedefinitions.json
       - cat imagedefinitions.json
 
 artifacts:
   files:
     - imagedefinitions.json
-    - target/course-service.jar
-
