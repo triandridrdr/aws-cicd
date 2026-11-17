@@ -29,33 +29,57 @@ BAGIAN 2: MEMBUAT AMAZON ECR (IMAGE REGISTRY)
 2. Klik tombol "Create repository".
 3. Konfigurasi repository:
    - General settings : Pilih "Private"
-   - Repository name  : javatechie-registry
+   - Repository name  : sample-repo
    - Biarkan opsi lain default.
 4. Klik tombol "Create repository".
 5. Catat URI repository yang terbuat:
-   URI: 518501464729.dkr.ecr.ap-southeast-2.amazonaws.com/javatechie-registry
+   URI: 518501464729.dkr.ecr.ap-southeast-2.amazonaws.com/sample-repo
+
+[PENTING]: Nama repository ("sample-repo") HARUS sama persis dengan yang
+dipakai di variabel REPOSITORY_URI pada buildspec (Bagian 3) dan Image URI pada
+Task Definition (Bagian 5.1). Repository harus dibuat lebih dulu, karena
+"docker push" tidak akan membuat repository secara otomatis.
 
 
 ================================================================================
-BAGIAN 3: KONFIGURASI BUILDSPEC.YML DI ROOT PROJECT
+BAGIAN 3: KONFIGURASI BUILDSPEC DI ROOT PROJECT
 ================================================================================
 [PENTING]: Agar CodePipeline dapat mengupdate Task Definition di ECS secara
 otomatis saat deployment, CodeBuild HARUS memproduksi output file bernama
 "imagedefinitions.json".
 
-Pastikan file "buildspec.yml" di root project Anda memiliki format berikut:
+[PENTING - NAMA FILE]: Nama file buildspec di repo ini adalah
+"buildspec.yaml" (ekstensi .yaml). CodeBuild secara default mencari
+"buildspec.yml", jadi pada Bagian 4 kolom "Buildspec name" WAJIB diisi
+"buildspec.yaml" (sesuai nama file sebenarnya di repo). Jika Anda memakai nama
+lain, nama di repo dan di CodeBuild harus sama persis.
+
+[PENTING - BUILD JAR]: Dockerfile menjalankan "COPY target/course-service.jar".
+File JAR itu hanya ada jika Maven dijalankan SEBELUM "docker build". Karena itu
+buildspec harus memuat "mvn clean install" (tanpa itu docker build gagal:
+"target/course-service.jar: not found"). Java 17 + Maven dipastikan tersedia
+lewat "runtime-versions" di fase install.
+
+Pastikan file buildspec di root project Anda memiliki format berikut:
 
 version: 0.2
 
 phases:
+  install:
+    runtime-versions:
+      java: corretto17
   pre_build:
     commands:
+      - echo Running Maven build...
+      - mvn clean install
       - echo Logging in to Amazon ECR...
       - aws --version
-      - aws ecr get-login-password --region ap-southeast-2 | docker login --username AWS --password-stdin 518501464729.dkr.ecr.ap-southeast-2.amazonaws.com
-      - REPOSITORY_URI=518501464729.dkr.ecr.ap-southeast-2.amazonaws.com/javatechie-registry
-      - COMMIT_HASH=$(echo $CODEBUILD_RESOLVED_SOURCE_VERSION | cut -c 1-7)
-      - IMAGE_TAG=${COMMIT_HASH:=latest}
+      - REGION=ap-southeast-2
+      - ACCOUNT_ID=518501464729
+      - ECR_REGISTRY=$ACCOUNT_ID.dkr.ecr.$REGION.amazonaws.com
+      - REPOSITORY_URI=$ECR_REGISTRY/sample-repo
+      - aws ecr get-login-password --region $REGION | docker login --username AWS --password-stdin $ECR_REGISTRY
+      - IMAGE_TAG=build-$(echo $CODEBUILD_BUILD_ID | awk -F":" '{print $2}')
   build:
     commands:
       - echo Build started on `date`
@@ -69,13 +93,31 @@ phases:
       - docker push $REPOSITORY_URI:latest
       - docker push $REPOSITORY_URI:$IMAGE_TAG
       - echo Writing image definitions file...
-      - printf '[{"name":"javatechie-container","imageUri":"%s"}]' $REPOSITORY_URI:$IMAGE_TAG > imagedefinitions.json
+      # DOCKER_CONTAINER_NAME harus sama persis dengan nama container di ECS Task Definition
+      - DOCKER_CONTAINER_NAME=sample-container
+      - printf '[{"name":"%s","imageUri":"%s"}]' $DOCKER_CONTAINER_NAME $REPOSITORY_URI:$IMAGE_TAG > imagedefinitions.json
+      - cat imagedefinitions.json
 artifacts:
   files:
     - imagedefinitions.json
 
+Catatan: "mvn clean install" juga menjalankan unit test (contextLoads). Jika
+test gagal, build berhenti. Tag image "build-<id>" unik per build, sehingga
+setiap deploy selalu memakai image yang benar-benar baru (bukan "latest").
+
+[CATATAN]: Pastikan REPOSITORY_URI di buildspec yang dipakai CodeBuild di
+repo Anda sudah mengarah ke "sample-repo" (bukan nama repository lama).
+Jika masih berbeda, build akan gagal saat push (repository tidak ditemukan).
+
+[PENTING - NAMA CONTAINER]: Nilai "name" di imagedefinitions.json
+("sample-container") HARUS sama persis dengan "Name" container di ECS Task
+Definition (Bagian 5.1). Jika berbeda (misal buildspec masih memakai nama lama
+"javatechie-container"), stage Deploy CodePipeline gagal dengan error
+"container name not found in task definition". Di buildspec yang menggunakan
+variabel, samakan DOCKER_CONTAINER_NAME=sample-container.
+
 Simpan, lalu push perubahan ke GitHub:
-git add buildspec.yml
+git add buildspec.yaml
 git commit -m "ci: add buildspec with imagedefinitions artifact"
 git push origin main
 
@@ -85,7 +127,9 @@ BAGIAN 4: MEMBUAT DAN KONFIGURASI AWS CODEBUILD
 ================================================================================
 1. Buka AWS Console -> cari "CodeBuild" -> klik "Create build project".
 2. Project configuration:
-   - Project name: course-project
+   - Project name: sample-project
+     (Nama ini harus sama persis dengan "Project name" di Build stage
+      CodePipeline pada Bagian 6, dan nama service role di bawah.)
 3. Source:
    - Source provider : GitHub
    - Repository      : Connect using OAuth / Personal Access Token
@@ -93,15 +137,20 @@ BAGIAN 4: MEMBUAT DAN KONFIGURASI AWS CODEBUILD
 4. Environment:
    - Environment image : Managed image
    - Compute           : EC2
-   - Operating system  : Amazon Linux 2 (atau Ubuntu standard)
+   - Operating system  : Amazon Linux (atau Ubuntu standard)
    - Runtime(s)        : Standard
-   - Image             : aws/codebuild/amazonlinux2-x86_64-standard:5.0 (atau versi terbaru)
+   - Image             : image "standard" versi 5.0 atau lebih baru (sudah berisi
+                         Maven, Docker, dan mendukung Java corretto17)
    - Image version     : Always use the latest image for this runtime version
    - Environment type  : Linux
    - [WAJIB CENTANG]   : "Privileged" (Enable this flag if you want to build Docker images)
-   - Service role      : New service role (Name: course-project-service-role)
+   - Service role      : New service role (Name: sample-project-role)
 5. Buildspec:
-   - Pilih: "Use a buildspec file" (buildspec name: buildspec.yml)
+   - Pilih: "Use a buildspec file"
+   - Buildspec name: buildspec.yaml
+     (WAJIB diisi, karena default CodeBuild adalah "buildspec.yml" sedangkan
+      file di repo bernama "buildspec.yaml". Jika dibiarkan kosong, build gagal:
+      "YAML_FILE_ERROR: stat buildspec.yml: no such file".)
 6. Artifacts:
    - Type: No artifacts (karena artifact akan diatur otomatis oleh CodePipeline)
 7. Klik tombol "Create build project".
@@ -110,14 +159,17 @@ BAGIAN 4: MEMBUAT DAN KONFIGURASI AWS CODEBUILD
 TAMBAHKAN PERMISSION IAM ROLE CODEBUILD:
 --------------------------------------------------------------------------------
 1. Buka AWS Console -> cari "IAM" -> pilih menu "Roles".
-2. Cari dan klik role: "course-project-service-role".
+2. Cari dan klik role: "sample-project-role".
 3. Di tab "Permissions", klik "Add permissions" -> "Attach policies".
 4. Cari dan centang:
    - AmazonEC2ContainerRegistryPowerUser
    (Atau AmazonEC2ContainerRegistryFullAccess)
 5. Klik "Add permissions".
-6. Uji manual: Kembali ke CodeBuild -> buka project "course-project" -> klik "Start build".
-   Pastikan statusnya SUCCEEDED dan image berhasil masuk ke ECR.
+6. Uji manual: Kembali ke CodeBuild -> buka project "sample-project" -> klik "Start build".
+   Pastikan statusnya SUCCEEDED dan image berhasil masuk ke ECR
+   (repository "sample-repo", dengan tag "latest" dan "build-<id>").
+   Langkah ini WAJIB sukses sebelum lanjut ke Bagian 5, karena Task Definition
+   membutuhkan image "sample-repo:latest" sudah ada di ECR.
 
 
 ================================================================================
@@ -140,69 +192,140 @@ HIERARKI STRUKTUR:
         (Wadah Docker)
 
 Catatan Port 8080:
-Port 8080 dipakai berulang-ulang karena harus cocok di setiap pintu akses:
-Aplikasi (8080) -> Task Def Port Mapping (8080) -> Security Group Inbound (8080) -> URL Browser (:8080).
+Port 8080 muncul berulang kali karena ia adalah port tempat aplikasi
+mendengarkan (listen) di dalam container, dan setiap "pintu" yang dilalui
+trafik harus diarahkan ke port yang sama itu. Jika salah satu berbeda,
+koneksi gagal (timeout / connection refused).
+
+Alur trafik dari browser sampai aplikasi:
+
+  Browser (http://<PUBLIC_IP>:8080)
+        |
+        v
+  Security Group Inbound (TCP 8080)   <- firewall di ENI task, harus mengizinkan 8080
+        |
+        v
+  Task Definition Port Mapping (container port 8080)
+        |
+        v
+  Aplikasi Spring Boot listen di 8080 (default Spring Boot, server.port)
+
+Peran masing-masing:
+1. Aplikasi (Spring Boot)
+   - Default listen di port 8080. Di project ini tidak ada "server.port" di
+     application.properties, jadi memakai default 8080.
+   - Inilah sumber angka 8080; semua pengaturan lain mengikutinya.
+2. Dockerfile (EXPOSE 8080)
+   - Hanya dokumentasi/metadata bahwa container memakai 8080.
+   - TIDAK membuka akses apa pun dan tidak wajib agar aplikasi berjalan.
+3. Task Definition - Port mapping (Container port 8080)
+   - Memberi tahu ECS port mana di dalam container yang diteruskan.
+   - Pada Fargate (mode jaringan awsvpc), task punya ENI/IP sendiri, sehingga
+     port container = port yang diakses dari luar (tidak bisa dipetakan ke
+     port lain seperti 80:8080 di Docker biasa).
+4. Security Group - Inbound rule (TCP 8080)
+   - Firewall pada task. Tanpa rule ini trafik ke 8080 diblokir meskipun
+     aplikasi sudah berjalan.
+   - Source 0.0.0.0/0 hanya untuk uji coba; untuk produksi batasi ke IP
+     tertentu atau pakai Load Balancer.
+5. URL Browser (:8080)
+   - Port harus ditulis eksplisit karena browser default ke 80/443.
+
+Catatan tambahan:
+- Port 8080 bukan angka wajib. Jika aplikasi diubah ke port lain (misal 9090
+  lewat "server.port=9090"), ubah juga EXPOSE, Port mapping, Security Group,
+  dan URL browser ke 9090.
+- Jika nanti memakai Application Load Balancer, port listener ALB boleh
+  berbeda (misal 80/443), tetapi Target Group tetap harus mengarah ke 8080 dan
+  Security Group task harus mengizinkan trafik dari ALB ke 8080.
+- Gejala jika salah:
+  * Timeout            -> Security Group belum mengizinkan 8080 atau Public IP
+                          belum aktif.
+  * Connection refused -> port di Task Definition tidak sesuai dengan port
+                          aplikasi.
 
 --------------------------------------------------------------------------------
 LANGKAH 5.1: MEMBUAT TASK DEFINITION ("Buku Resep")
 --------------------------------------------------------------------------------
 1. Buka AWS Console -> "Amazon Elastic Container Service" (ECS).
 2. Di menu kiri, klik "Task definitions" -> klik "Create new task definition".
-3. Task definition family: javatechie-task
+3. Task definition family: ecs-task
 4. Infrastructure requirements / Launch type:
    - Pilih: AWS Fargate
    - Operating system/Architecture: Linux/X86_64
 5. Task size:
    - CPU    : 0.25 vCPU
-   - Memory : 0.5 GB
-6. Container details:
-   - Name         : javatechie-container
-   - Image URI    : 518501464729.dkr.ecr.ap-southeast-2.amazonaws.com/javatechie-registry:latest
+   - Memory : 1 GB
+     (Jangan 0.5 GB: JVM Spring Boot + Swagger sering kehabisan memori di
+      0.5 GB sehingga task berulang kali berhenti dengan exit code 137 / OOM.
+      Kombinasi 0.25 vCPU + 1 GB valid di Fargate.)
+6. Task execution role: biarkan default "Create new role" (ecsTaskExecutionRole).
+   Role ini WAJIB ada agar Fargate bisa menarik (pull) image dari ECR private
+   dan menulis log ke CloudWatch.
+7. Container details:
+   - Name         : sample-container
+   - Image URI    : 518501464729.dkr.ecr.ap-southeast-2.amazonaws.com/sample-repo:latest
    - Port mappings:
      * Container port : 8080
      * Protocol       : TCP
      * App protocol   : HTTP
-7. Klik tombol "Create".
+8. Klik tombol "Create".
 
 --------------------------------------------------------------------------------
 LANGKAH 5.2: MEMBUAT CLUSTER ("Gedung / Area Kerja")
 --------------------------------------------------------------------------------
 1. Di menu kiri, klik "Clusters" -> klik "Create cluster".
-2. Cluster name: javatechie-cluster
+2. Cluster name: ecs-cluster
 3. Infrastructure: Pastikan opsi "AWS Fargate (serverless)" tercentang.
 4. Klik tombol "Create".
 
 --------------------------------------------------------------------------------
 LANGKAH 5.3: MEMBUAT SERVICE ("Manajer Operasional")
 --------------------------------------------------------------------------------
-1. Buka cluster: "javatechie-cluster".
+1. Buka cluster: "ecs-cluster".
 2. Buka tab "Services" -> klik tombol "Create".
 3. Deployment configuration:
    - Application type : Service
-   - Family           : javatechie-task
+   - Family           : ecs-task
+     (Harus sama dengan Task definition family di Langkah 5.1. Pipeline tidak
+      memakai nama ini secara langsung: stage Deploy mengambil task definition
+      dari Service lalu membuat revision baru, jadi family tidak perlu
+      dimasukkan di CodePipeline maupun buildspec.)
    - Revision         : latest
-   - Service name     : javatechie-service
+   - Service name     : ecs-service
    - Desired tasks    : 1
 4. Networking:
    - VPC & Subnets: Default VPC dan centang semua Subnet yang ada.
    - Security group: Create a new security group
-     * Security group name : javatechie-sg
+     * Security group name : sample-sg
      * Inbound rules       :
        - Type   : Custom TCP
        - Port   : 8080
        - Source : Anywhere-IPv4 (0.0.0.0/0)
+       (Console biasanya mengisi rule default port 80 sesuai port mapping;
+        pastikan rule yang tersisa adalah TCP 8080, hapus/ubah rule lain.)
    - Public IP: Turned ON
+     (WAJIB aktif. Tanpa Public IP dan tanpa NAT Gateway, task tidak bisa
+      menarik image dari ECR dan gagal dengan "CannotPullContainerError".)
 5. Klik tombol "Create".
 
 --------------------------------------------------------------------------------
 LANGKAH 5.4: PENGUJIAN AWAL SEBELUM PIPELINE
 --------------------------------------------------------------------------------
-1. Buka cluster "javatechie-cluster" -> tab "Tasks".
+1. Buka cluster "ecs-cluster" -> tab "Tasks".
 2. Klik Task ID yang berstatus "Running".
 3. Di bagian "Configuration" / "Network interfaces", salin "Public IP" (misal: 3.27.56.127).
-4. Akses melalui browser:
+4. Uji endpoint dasar lebih dulu (paling andal):
+   http://<PUBLIC_IP>:8080/courses/health    -> harus menampilkan: UP
+   http://<PUBLIC_IP>:8080/courses/welcome   -> pesan sambutan
+5. Lalu buka Swagger UI:
    http://<PUBLIC_IP>:8080/swagger-ui/index.html
-5. Pastikan halaman Swagger berhasil tampil.
+   [CATATAN]: pom.xml memakai springdoc-openapi 2.0.4 bersama Spring Boot
+   3.2.5. Versi springdoc ini dibuat untuk Spring Boot 3.0.x dan dapat
+   menampilkan "Failed to load API definition" (/v3/api-docs error 500) di Boot
+   3.2.x. Jika /courses/health berhasil tetapi Swagger error, pipeline Anda
+   sudah benar; perbaiki dengan menaikkan versi springdoc di pom.xml ke 2.3.0
+   atau lebih baru.
 
 
 ================================================================================
@@ -213,7 +336,7 @@ otomatis mengupdate container di ECS tanpa intervensi manual.
 
 1. Buka AWS Console -> cari "CodePipeline" -> klik "Create pipeline".
 2. Pipeline settings:
-   - Pipeline name : javatechie-pipeline
+   - Pipeline name : sample-pipeline
    - Pipeline type : V2 (atau V1 default)
    - Execution mode: Queued / Superseded
    - Service role  : New service role (biarkan nama default terisi)
@@ -231,17 +354,18 @@ otomatis mengupdate container di ECS tanpa intervensi manual.
 4. Build stage (Tahap Build & Push ECR):
    - Build provider : AWS CodeBuild
    - Region         : ap-southeast-2 (sesuaikan dengan region Anda)
-   - Project name   : course-project
+   - Project name   : sample-project
    - Build type     : Single build
    - Klik "Next".
 
 5. Deploy stage (Tahap Deploy ke Fargate):
    - Deploy provider : Amazon ECS
    - Region          : ap-southeast-2 (sesuaikan dengan region Anda)
-   - Cluster name    : javatechie-cluster
-   - Service name    : javatechie-service
+   - Cluster name    : ecs-cluster
+   - Service name    : ecs-service
    - Image definitions file: imagedefinitions.json
-     (File ini dibuat otomatis oleh buildspec.yml pada bagian post_build)
+     (File ini dibuat otomatis oleh buildspec pada bagian post_build)
+   - Deployment timeout: biarkan default (atau 10-15 menit).
    - Klik "Next".
 
 6. Review:
@@ -257,11 +381,53 @@ BAGIAN 7: UJI COBA OTOMATISASI CI/CD (E2E TEST)
    git add .
    git commit -m "test: verify automated cicd pipeline"
    git push origin main
-3. Buka AWS CodePipeline -> "javatechie-pipeline":
+3. Buka AWS CodePipeline -> "sample-pipeline":
    - Stage Source : Akan otomatis berubah status menjadi "In Progress" lalu "Succeeded".
    - Stage Build  : CodeBuild akan otomatis mem-build image baru dan mengunggah ke ECR.
    - Stage Deploy : ECS Fargate akan otomatis mendownload image baru dan melakukan rolling update.
 4. Setelah status Deploy "Succeeded", buka IP Publik Task terbaru di browser:
-   http://<PUBLIC_IP>:8080/swagger-ui/index.html
+   http://<PUBLIC_IP>:8080/courses/welcome
    Perubahan kode Anda telah tayang secara otomatis.
+   [CATATAN]: IP Publik task BERUBAH setiap deploy (task lama diganti task
+   baru). Ambil IP terbaru dari ECS -> ecs-cluster -> Tasks -> task Running.
+   Untuk IP tetap, gunakan Application Load Balancer.
+
+
+================================================================================
+BAGIAN 8: TROUBLESHOOTING (ERROR UMUM)
+================================================================================
+Stage Build gagal:
+- "stat buildspec.yml: no such file"
+    -> Isi "Buildspec name" di CodeBuild dengan buildspec.yaml (Bagian 4).
+- "target/course-service.jar: not found" pada docker build
+    -> Buildspec belum menjalankan "mvn clean install" (Bagian 3).
+- "Cannot connect to the Docker daemon"
+    -> Opsi "Privileged" di CodeBuild belum dicentang.
+- "AccessDeniedException / no basic auth credentials / not authorized" saat
+  login/push ke ECR
+    -> Policy AmazonEC2ContainerRegistryPowerUser belum dipasang di role
+       sample-project-role.
+- "name unknown: The repository ... does not exist"
+    -> Nama repository di buildspec tidak sama dengan "sample-repo" di ECR,
+       atau region/account salah.
+- Maven test gagal
+    -> Lihat log; perbaiki test atau kode sebelum push.
+
+Stage Deploy gagal:
+- "container name not found" / tidak ada perubahan image
+    -> Nama container di imagedefinitions.json (DOCKER_CONTAINER_NAME) tidak
+       sama dengan "sample-container" di Task Definition.
+- "Service not found"
+    -> Cluster/service di CodePipeline tidak sama dengan ecs-cluster /
+       ecs-service, atau region berbeda.
+- Deploy "In progress" lama lalu gagal, task terus restart
+    -> Cek ECS -> Service -> tab Logs/Events dan "Stopped reason" pada task:
+       * exit code 137 / OutOfMemory -> naikkan memory task (>= 1 GB).
+       * CannotPullContainerError    -> Public IP belum aktif, atau image/tag
+                                        belum ada di ECR.
+       * Task failed to start (execution role) -> pastikan ecsTaskExecutionRole
+                                        terpasang di Task Definition.
+
+Aplikasi tidak bisa diakses dari browser:
+    -> Lihat "Catatan Port 8080" di Bagian 5 (Security Group, Public IP, port).
 ================================================================================
