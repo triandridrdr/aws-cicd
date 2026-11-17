@@ -90,7 +90,11 @@ phases:
     commands:
       - echo Build completed on `date`
       - echo Pushing the Docker images...
+      # Push #1 - tag "latest": penunjuk ke versi terbaru (tag bergerak, selalu ditimpa tiap build).
+      # Dipakai Task Definition (Bagian 5.1) saat membuat service pertama kali.
       - docker push $REPOSITORY_URI:latest
+      # Push #2 - tag "build-<id>": versi unik per build (tidak pernah ditimpa).
+      # Dipakai imagedefinitions.json untuk deploy otomatis + rollback/pelacakan versi.
       - docker push $REPOSITORY_URI:$IMAGE_TAG
       - echo Writing image definitions file...
       # DOCKER_CONTAINER_NAME harus sama persis dengan nama container di ECS Task Definition
@@ -176,20 +180,44 @@ TAMBAHKAN PERMISSION IAM ROLE CODEBUILD:
 BAGIAN 5: MENYIAPKAN INFRASTRUKTUR AWS ECS FARGATE
 ================================================================================
 HIERARKI STRUKTUR:
-                     [ ECS Cluster ]
-             (Rumah besar / Batas Lingkungan)
-                            |
-                            v
-                     [ ECS Service ]
-             (Pengawas / Manajer Operasional)
-                 /          |          \
-                v           v           v
-           [ Task 1 ]  [ Task 2 ]  [ Task 3 ]
-       (Aplikasi Nyala / Instansiasi Nyata)
-               |            |            |
-               v            v            v
-          [Container]  [Container]  [Container]
-        (Wadah Docker)
+
+  [ ECR: sample-repo ]  --- image (sample-repo:build-<id>) ---+
+   (Gudang image)                                             |
+                                                              v
+  [ Task Definition: ecs-task ]  <-- "Buku Resep" / blueprint (versi: ecs-task:1, :2, ...)
+   (Resep: image, CPU, memori, port, nama container "sample-container")
+          |
+          | dipakai oleh
+          v
+  [ ECS Cluster: ecs-cluster ]
+   (Rumah besar / Batas Lingkungan, Fargate = tanpa kelola server)
+          |
+          v
+  [ ECS Service: ecs-service ]
+   (Pengawas / Manajer Operasional: menjaga jumlah task sesuai "Desired tasks",
+    menjalankan ulang task yang mati, melakukan rolling update saat deploy)
+        /          |          \
+       v           v           v
+  [ Task 1 ]   [ Task 2 ]   [ Task 3 ]      <- jumlah = Desired tasks
+   (Instansiasi nyata dari Task Definition; tiap task punya IP sendiri)
+       |           |           |
+       v           v           v
+  [Container]  [Container]  [Container]     <- sample-container (port 8080)
+   (Wadah Docker yang menjalankan aplikasi)
+
+Penjelasan:
+1. Task Definition = cetak biru (resep). Setiap deploy dari pipeline membuat
+   REVISION baru (ecs-task:2, :3, ...) dengan image tag terbaru.
+2. Cluster = wadah logis tempat Service dan Task berjalan.
+3. Service = yang memastikan Task selalu berjalan sesuai Task Definition aktif.
+4. Task = satu "paket" yang berjalan dari Task Definition; satu Task bisa berisi
+   lebih dari satu container (di project ini hanya satu: sample-container).
+5. Container = proses aplikasi sebenarnya, berasal dari image di ECR.
+
+Pada tutorial ini "Desired tasks" = 1, jadi hanya ada satu Task dan satu
+Container. Gambar di atas menampilkan 3 task hanya sebagai ilustrasi jika
+nilai Desired tasks dinaikkan. Saat deploy, ECS sementara menjalankan task
+baru berdampingan dengan task lama, lalu mematikan task lama (rolling update).
 
 Catatan Port 8080:
 Port 8080 muncul berulang kali karena ia adalah port tempat aplikasi
